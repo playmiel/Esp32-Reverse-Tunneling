@@ -449,9 +449,7 @@ class myconn {
             }
             return false;
         }
-        void attemptReconnect() {
-            // Placeholder for reconnection logic
-            DEBUG("myconn %p attempting reconnect\n", this);
+
 void attemptReconnect() {
             if (m_local_connected) {
                 close(m_local);
