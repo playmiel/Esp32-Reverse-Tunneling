@@ -275,6 +275,7 @@ class myconn {
         ssh_channel m_remote;
         int m_local; // socket
         time_t m_lasttime;
+        time_t m_creation_time;
         bool m_remote_connected;
         bool m_local_connected;
         bool m_shutdown;
@@ -285,6 +286,7 @@ class myconn {
             // set up member variables
             m_remote = ch;
             m_lasttime = 0;
+            m_creation_time = time(NULL);
             m_remote_connected = true;
             m_local_connected = false;
             bool l_close_remote = true; // assume failure
@@ -324,6 +326,7 @@ class myconn {
         bool isShutdown() { return m_shutdown; }
         bool isLocalConnected() { return m_local_connected; }
         int getFd() { return m_local; }
+        time_t getCreationTime() { return m_creation_time; }
 
         void closeRemote() {
             if (m_remote_connected) {
@@ -434,6 +437,50 @@ class myconn {
                 return true;
             }
             return false;
+        }
+
+        bool checkConnectionTime() {
+            time_t current_time = time(NULL);
+            time_t connection_duration = current_time - m_creation_time;
+            
+            if (connection_duration > 10 && !m_local_connected) {
+                DEBUG("myconn %p connection attempt timeout after %ld seconds\n", this, connection_duration);
+                return true;
+            }
+            return false;
+        }
+        void attemptReconnect() {
+            // Placeholder for reconnection logic
+            DEBUG("myconn %p attempting reconnect\n", this);
+void attemptReconnect() {
+            if (m_local_connected) {
+                close(m_local);
+                m_local_connected = false;
+            }
+            
+            m_local = socket(s_target->ai_family, s_target->ai_socktype, s_target->ai_protocol);
+            if (m_local < 0) {
+                DEBUG("myconn %p reconnect failed to create socket, error %d\n",this,errno);
+                return;
+            }
+            
+            if (fcntl(m_local, F_SETFL, fcntl(m_local, F_GETFL) | O_NONBLOCK) == -1) {
+                DEBUG("myconn %p reconnect unable to set socket non blocking, error %d\n",this,errno);
+                close(m_local);
+                m_local = -1;
+                return;
+            }
+            
+            if (connect(m_local, s_target->ai_addr, s_target->ai_addrlen) == 0) {
+                DEBUG("myconn %p reconnected %d\n",this,m_local);
+                m_local_connected = true;
+            } else if ((errno == EAGAIN) || (errno == EINPROGRESS)) {
+                DEBUG("myconn %p waiting for reconnection to complete %d\n",this,m_local);
+            } else {
+                DEBUG("myconn %p failed to reconnect, errno %d\n",this,errno);
+                close(m_local);
+                m_local = -1;
+            }
         }
 };
 
@@ -566,9 +613,14 @@ void run_tunnel2(ssh_session & session) {
                 DEBUG("Channel %p has timed out\n",j->second);
                 closeChannel = true;
             } else if (!j->second->isLocalConnected()) {
-                // channel is active but local is not yet connected so skip this time around
-                DEBUG("Channel %p not connected\n",j->second);
-                ++j;
+                // Si la connexion n'est pas établie après 10 secondes, on ferme
+                if (j->second->checkConnectionTime()) {
+                    DEBUG("Channel %p connection timeout\n",j->second);
+                    closeChannel = true;
+                } else {
+                    DEBUG("Channel %p not connected\n",j->second);
+                    ++j;
+                }
             } else {
                 // channel is still active
                 // run connection until no more data
